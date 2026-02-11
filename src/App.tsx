@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 type SortBy = "updated" | "score" | "created";
+
+const DEFAULT_GLOBAL_SHORTCUT = "CommandOrControl+Shift+K";
+const GLOBAL_SHORTCUT_EVENT = "global-shortcut-triggered";
 
 type PromptRecord = {
   id: number;
@@ -110,6 +114,12 @@ function formatDate(value: string): string {
   return parsed.toLocaleString("zh-CN", { hour12: false });
 }
 
+function formatShortcutForDisplay(shortcut: string): string {
+  return shortcut
+    .replace(/CommandOrControl/gi, "Ctrl")
+    .replace(/CmdOrControl/gi, "Ctrl");
+}
+
 function App() {
   const [prompts, setPrompts] = useState<PromptRecord[]>([]);
   const [tags, setTags] = useState<TagInfo[]>([]);
@@ -126,6 +136,10 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteItems, setPaletteItems] = useState<PromptRecord[]>([]);
+  const [globalShortcut, setGlobalShortcut] = useState(DEFAULT_GLOBAL_SHORTCUT);
+  const [shortcutDraft, setShortcutDraft] = useState(DEFAULT_GLOBAL_SHORTCUT);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isUpdatingShortcut, setIsUpdatingShortcut] = useState(false);
 
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -133,6 +147,10 @@ function App() {
   const previewText = useMemo(
     () => applyVariables(editor.content, variableValues),
     [editor.content, variableValues],
+  );
+  const globalShortcutDisplay = useMemo(
+    () => formatShortcutForDisplay(globalShortcut),
+    [globalShortcut],
   );
 
   useEffect(() => {
@@ -144,6 +162,17 @@ function App() {
       return nextValues;
     });
   }, [variableNames]);
+
+  useEffect(() => {
+    void invoke<string>("get_global_shortcut")
+      .then((shortcut) => {
+        setGlobalShortcut(shortcut);
+        setShortcutDraft(shortcut);
+      })
+      .catch((error) => {
+        setStatusMessage(`读取全局快捷键失败: ${String(error)}`);
+      });
+  }, []);
 
   useEffect(() => {
     const refreshTimer = window.setTimeout(() => {
@@ -190,6 +219,34 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  useEffect(() => {
+    let isUnmounted = false;
+    let unlisten: (() => void) | null = null;
+
+    void listen(GLOBAL_SHORTCUT_EVENT, () => {
+      setPaletteOpen(true);
+      setPaletteQuery("");
+      setStatusMessage(`已通过全局快捷键唤起（${globalShortcutDisplay}）`);
+    })
+      .then((fn) => {
+        if (isUnmounted) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch((error) => {
+        setStatusMessage(`全局快捷键监听失败: ${String(error)}`);
+      });
+
+    return () => {
+      isUnmounted = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [globalShortcutDisplay]);
 
   useEffect(() => {
     if (!paletteOpen) {
@@ -398,6 +455,33 @@ function App() {
     setPaletteQuery("");
   };
 
+  const handleSaveGlobalShortcut = async () => {
+    const normalizedShortcut = shortcutDraft.trim();
+    if (!normalizedShortcut) {
+      setStatusMessage("请先填写全局快捷键");
+      return;
+    }
+
+    setIsUpdatingShortcut(true);
+    try {
+      const savedShortcut = await invoke<string>("update_global_shortcut", {
+        shortcut: normalizedShortcut,
+      });
+      setGlobalShortcut(savedShortcut);
+      setShortcutDraft(savedShortcut);
+      setSettingsOpen(false);
+      setStatusMessage(`全局快捷键已更新为 ${formatShortcutForDisplay(savedShortcut)}`);
+    } catch (error) {
+      setStatusMessage(`更新全局快捷键失败: ${String(error)}`);
+    } finally {
+      setIsUpdatingShortcut(false);
+    }
+  };
+
+  const handleResetGlobalShortcut = () => {
+    setShortcutDraft(DEFAULT_GLOBAL_SHORTCUT);
+  };
+
   return (
     <div className="app-shell">
       <header className="top-bar">
@@ -407,7 +491,10 @@ function App() {
         </div>
         <div className="top-actions">
           <button className="ghost-button" onClick={() => setPaletteOpen(true)}>
-            快速面板 Ctrl+K
+            快速面板 Ctrl+K / 全局 {globalShortcutDisplay}
+          </button>
+          <button className="ghost-button" onClick={() => setSettingsOpen((current) => !current)}>
+            快捷键设置
           </button>
           <button className="ghost-button" onClick={() => importInputRef.current?.click()}>
             导入 JSON
@@ -427,6 +514,38 @@ function App() {
           />
         </div>
       </header>
+
+      {settingsOpen ? (
+        <section className="shortcut-settings">
+          <div className="shortcut-settings-title">系统级全局快捷键</div>
+          <p className="shortcut-settings-help">
+            使用格式例如 CommandOrControl+Shift+K、Alt+Space。保存后会立即生效并持久化。
+          </p>
+          <div className="shortcut-settings-row">
+            <input
+              className="shortcut-input"
+              value={shortcutDraft}
+              placeholder="例如 CommandOrControl+Shift+K"
+              onChange={(event) => setShortcutDraft(event.target.value)}
+            />
+            <button
+              className="ghost-button"
+              onClick={handleResetGlobalShortcut}
+              disabled={isUpdatingShortcut}
+            >
+              恢复默认
+            </button>
+            <button
+              className="primary-button"
+              onClick={() => void handleSaveGlobalShortcut()}
+              disabled={isUpdatingShortcut}
+            >
+              {isUpdatingShortcut ? "保存中..." : "保存快捷键"}
+            </button>
+          </div>
+          <div className="shortcut-settings-caption">当前生效：{globalShortcutDisplay}</div>
+        </section>
+      ) : null}
 
       <div className="workspace">
         <aside className="left-panel">

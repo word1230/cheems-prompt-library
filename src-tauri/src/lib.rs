@@ -5,7 +5,12 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::Manager;
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+const DEFAULT_GLOBAL_SHORTCUT: &str = "CommandOrControl+Shift+K";
+const GLOBAL_SHORTCUT_SETTING_KEY: &str = "global_shortcut";
+const GLOBAL_SHORTCUT_EVENT: &str = "global-shortcut-triggered";
 
 #[derive(Clone)]
 struct AppState {
@@ -197,12 +202,90 @@ fn initialize_database(db_path: &Path) -> Result<(), String> {
         FOREIGN KEY(prompt_id) REFERENCES prompts(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_prompts_updated_at ON prompts(updated_at);
       CREATE INDEX IF NOT EXISTS idx_prompt_versions_prompt_id ON prompt_versions(prompt_id);
       CREATE INDEX IF NOT EXISTS idx_usage_logs_prompt_id ON usage_logs(prompt_id);
       ",
     )
     .map_err(|error| error.to_string())?;
+
+  connection
+    .execute(
+      "
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (?1, ?2, ?3)
+      ON CONFLICT(key) DO NOTHING
+      ",
+      params![
+        GLOBAL_SHORTCUT_SETTING_KEY,
+        DEFAULT_GLOBAL_SHORTCUT,
+        now_iso()
+      ],
+    )
+    .map_err(|error| error.to_string())?;
+
+  Ok(())
+}
+
+fn normalize_shortcut(shortcut: &str) -> Result<String, String> {
+  let normalized = shortcut.trim().to_string();
+  if normalized.is_empty() {
+    return Err("全局快捷键不能为空".to_string());
+  }
+  Ok(normalized)
+}
+
+fn read_global_shortcut_setting(connection: &Connection) -> Result<String, String> {
+  let stored_value = connection
+    .query_row(
+      "SELECT value FROM app_settings WHERE key = ?1 LIMIT 1",
+      params![GLOBAL_SHORTCUT_SETTING_KEY],
+      |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|error| error.to_string())?;
+
+  let normalized = stored_value
+    .as_deref()
+    .and_then(|value| normalize_shortcut(value).ok())
+    .unwrap_or_else(|| DEFAULT_GLOBAL_SHORTCUT.to_string());
+
+  Ok(normalized)
+}
+
+fn persist_global_shortcut_setting(connection: &Connection, shortcut: &str) -> Result<(), String> {
+  connection
+    .execute(
+      "
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (?1, ?2, ?3)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      ",
+      params![GLOBAL_SHORTCUT_SETTING_KEY, shortcut, now_iso()],
+    )
+    .map_err(|error| error.to_string())?;
+
+  Ok(())
+}
+
+fn apply_global_shortcut<R: tauri::Runtime>(
+  app_handle: &AppHandle<R>,
+  shortcut: &str,
+) -> Result<(), String> {
+  let shortcut_manager = app_handle.global_shortcut();
+  shortcut_manager
+    .unregister_all()
+    .map_err(|error| error.to_string())?;
+  shortcut_manager
+    .register(shortcut)
+    .map_err(|error| error.to_string())?;
+
   Ok(())
 }
 
@@ -290,6 +373,37 @@ fn insert_prompt_version(
     )
     .map_err(|error| error.to_string())?;
   Ok(())
+}
+
+#[tauri::command]
+fn get_global_shortcut(state: tauri::State<'_, AppState>) -> Result<String, String> {
+  let connection = open_connection(&state.db_path)?;
+  read_global_shortcut_setting(&connection)
+}
+
+#[tauri::command]
+fn update_global_shortcut(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  shortcut: String,
+) -> Result<String, String> {
+  let normalized_shortcut = normalize_shortcut(&shortcut)?;
+  let connection = open_connection(&state.db_path)?;
+  let previous_shortcut = read_global_shortcut_setting(&connection)?;
+
+  if previous_shortcut == normalized_shortcut {
+    return Ok(previous_shortcut);
+  }
+
+  if let Err(error) = apply_global_shortcut(&app, &normalized_shortcut) {
+    let _ = apply_global_shortcut(&app, &previous_shortcut);
+    return Err(format!("全局快捷键注册失败：{error}"));
+  }
+
+  persist_global_shortcut_setting(&connection, &normalized_shortcut)?;
+  log::info!("global shortcut updated: {normalized_shortcut}");
+
+  Ok(normalized_shortcut)
 }
 
 #[tauri::command]
@@ -720,7 +834,24 @@ fn import_prompts_json(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  let global_shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
+    .with_handler(|app, _shortcut, event| {
+      if event.state != ShortcutState::Pressed {
+        return;
+      }
+
+      if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+      }
+
+      let _ = app.emit(GLOBAL_SHORTCUT_EVENT, ());
+    })
+    .build();
+
   tauri::Builder::default()
+    .plugin(global_shortcut_plugin)
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -734,11 +865,25 @@ pub fn run() {
       fs::create_dir_all(&app_data_dir)?;
       let db_path = app_data_dir.join("prompt-library.db");
       initialize_database(&db_path).map_err(std::io::Error::other)?;
+
+      let connection = open_connection(&db_path).map_err(std::io::Error::other)?;
+      let active_shortcut = read_global_shortcut_setting(&connection).map_err(std::io::Error::other)?;
+      match apply_global_shortcut(&app.handle(), &active_shortcut) {
+        Ok(()) => {
+          log::info!("global shortcut enabled: {active_shortcut}");
+        }
+        Err(error) => {
+          log::warn!("global shortcut register failed: {error}");
+        }
+      }
+
       app.manage(AppState { db_path });
 
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
+      get_global_shortcut,
+      update_global_shortcut,
       list_prompts,
       list_tags,
       get_prompt,

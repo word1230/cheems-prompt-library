@@ -40,6 +40,39 @@
   align-items: center;
 }
 
+.shortcut-settings {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-bg);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut-settings-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.shortcut-settings-help {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.shortcut-settings-row {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.shortcut-settings-caption {
+  color: var(--text-muted);
+  font-size: 0.83rem;
+}
+
 button {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -123,6 +156,7 @@ button:disabled {
 
 .search-input,
 .sort-select,
+.shortcut-input,
 .title-input,
 .editor-row input,
 .content-editor,
@@ -141,6 +175,7 @@ button:disabled {
 
 .search-input:focus,
 .sort-select:focus,
+.shortcut-input:focus,
 .title-input:focus,
 .editor-row input:focus,
 .content-editor:focus,
@@ -455,6 +490,10 @@ button:disabled {
 @media (max-width: 660px) {
   .app-shell {
     padding: 10px;
+  }
+
+  .shortcut-settings-row {
+    grid-template-columns: 1fr;
   }
 
   .top-bar {
