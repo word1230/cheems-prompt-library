@@ -1,0 +1,32 @@
+:root {
+  --text-main: #10222f;
+  --text-muted: #5c6b76;
+  --line: #d3dce4;
+  --panel-bg: rgba(255, 255, 255, 0.9);
+  --accent: #0f766e;
+  --accent-strong: #0b645d;
+  --accent-soft: #d7f0eb;
+  --danger: #b42318;
+  font-family: "Segoe UI Variable Text", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+  line-height: 1.4;
+  font-weight: 400;
+  color: var(--text-main);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 0% 0%, #e5f5ef 0%, transparent 36%),
+    radial-gradient(circle at 100% 0%, #ffeecf 0%, transparent 34%),
+    linear-gradient(145deg, #edf2f4, #fffaf0);
+}
