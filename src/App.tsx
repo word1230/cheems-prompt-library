@@ -129,6 +129,7 @@ function App() {
   const [sortBy, setSortBy] = useState<SortBy>("updated");
   const [editor, setEditor] = useState<EditorState>(createEmptyEditorState());
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
+  const [isVariablePanelOpen, setIsVariablePanelOpen] = useState(false);
   const [rating, setRating] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState("准备就绪");
   const [isSaving, setIsSaving] = useState(false);
@@ -672,6 +673,13 @@ function App() {
             >
               {isSaving ? "保存中..." : "保存"}
             </button>
+            <button
+              className="ghost-button"
+              onClick={() => void handleCopyAndLog()}
+              disabled={editor.id === null || !previewText.trim()}
+            >
+              复制当前 Prompt
+            </button>
             <button className="ghost-button" onClick={handleNewPrompt} disabled={isSaving}>
               清空
             </button>
@@ -685,56 +693,72 @@ function App() {
           </div>
 
           <section className="panel-section">
-            <div className="section-title">变量预览</div>
-            {variableNames.length === 0 ? (
-              <div className="empty-inline">当前未检测到变量，占位符格式为 {"{{变量名}}"}</div>
-            ) : (
-              <div className="variable-grid">
-                {variableNames.map((variableName) => (
-                  <label key={variableName} className="variable-item">
-                    <span>{variableName}</span>
-                    <input
-                      value={variableValues[variableName] ?? ""}
-                      onChange={(event) =>
-                        setVariableValues((current) => ({
-                          ...current,
-                          [variableName]: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                ))}
-              </div>
-            )}
-
-            <textarea className="preview-box" value={previewText} readOnly />
-
-            <div className="preview-actions">
-              <label className="rating-field">
-                评分
-                <select
-                  value={rating === null ? "" : String(rating)}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    setRating(nextValue ? Number(nextValue) : null);
-                  }}
-                >
-                  <option value="">不评分</option>
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3">3</option>
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                </select>
-              </label>
+            <div className="section-head">
+              <div className="section-title">变量预览</div>
               <button
-                className="primary-button"
-                onClick={() => void handleCopyAndLog()}
-                disabled={!previewText.trim()}
+                className="ghost-button small"
+                onClick={() => setIsVariablePanelOpen((current) => !current)}
+                aria-expanded={isVariablePanelOpen}
               >
-                复制并记录
+                {isVariablePanelOpen ? "收起" : "展开"}
               </button>
             </div>
+
+            {isVariablePanelOpen ? (
+              <>
+                {variableNames.length === 0 ? (
+                  <div className="empty-inline">当前未检测到变量，占位符格式为 {"{{变量名}}"}</div>
+                ) : (
+                  <div className="variable-grid">
+                    {variableNames.map((variableName) => (
+                      <label key={variableName} className="variable-item">
+                        <span>{variableName}</span>
+                        <input
+                          value={variableValues[variableName] ?? ""}
+                          onChange={(event) =>
+                            setVariableValues((current) => ({
+                              ...current,
+                              [variableName]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                <textarea className="preview-box" value={previewText} readOnly />
+
+                <div className="preview-actions">
+                  <label className="rating-field">
+                    评分
+                    <select
+                      value={rating === null ? "" : String(rating)}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        setRating(nextValue ? Number(nextValue) : null);
+                      }}
+                    >
+                      <option value="">不评分</option>
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                      <option value="5">5</option>
+                    </select>
+                  </label>
+                  <button
+                    className="primary-button"
+                    onClick={() => void handleCopyAndLog()}
+                    disabled={!previewText.trim()}
+                  >
+                    复制并记录
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="empty-inline">已折叠，展开后可填写变量并查看实时预览</div>
+            )}
           </section>
 
           <section className="panel-section">
